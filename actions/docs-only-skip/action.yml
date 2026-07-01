@@ -1,0 +1,56 @@
+name: Docs-only skip
+description: >
+  Detects whether a pull request only touches docs/markdown (in which case
+  downstream code checks can be skipped). Pushes always report code=true.
+
+inputs:
+  skip-pattern:
+    description: >
+      Extended regex (grep -E) matching paths that do NOT count as "code".
+      A PR where every changed file matches this pattern is docs-only.
+    required: false
+    default: '^(docs/|.*\.md$)'
+
+outputs:
+  code:
+    description: "'true' if this run should execute code checks, 'false' if docs-only"
+    value: ${{ steps.detect.outputs.code }}
+  changed-files:
+    description: Space-separated list of added/changed/renamed files (empty on push or docs-only)
+    value: ${{ steps.detect.outputs.changed_files }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+    - id: detect
+      shell: bash
+      env:
+        SKIP_PATTERN: ${{ inputs.skip-pattern }}
+      run: |
+        set -euo pipefail
+
+        # Push → run everything
+        if [ "${{ github.event_name }}" = "push" ]; then
+          echo "code=true"      >> "$GITHUB_OUTPUT"
+          echo "changed_files=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        BASE="${{ github.event.pull_request.base.sha }}"
+        HEAD="${{ github.event.pull_request.head.sha }}"
+        CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+
+        # Docs-only → skip
+        if ! echo "$CHANGED" | grep -qvE "$SKIP_PATTERN"; then
+          echo "code=false"    >> "$GITHUB_OUTPUT"
+          echo "changed_files=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "code=true" >> "$GITHUB_OUTPUT"
+
+        FILES=$(git diff --name-only --diff-filter=ACMR "$BASE" "$HEAD" | tr '\n' ' ')
+        echo "changed_files=$FILES" >> "$GITHUB_OUTPUT"
