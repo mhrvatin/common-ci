@@ -1,0 +1,69 @@
+# Dogfoods every action in this repo against the tiny fixture/ workspace, so
+# a broken action fails here instead of silently breaking every consumer repo.
+
+name: Self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: 1.3.14
+
+jobs:
+  committer-check:
+    name: Committer identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./actions/committer-check
+        with:
+          expected-name: Marcus Hrvatin
+          expected-email: github.com@hrvatin.se
+
+  docs-only-skip:
+    name: Docs-only skip
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: detect
+        uses: ./actions/docs-only-skip
+
+  lint:
+    name: Lint fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./actions/biome-lint
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+  build:
+    name: Build fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./actions/bun-build
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          packages: hello
+
+  ci-ok:
+    name: CI OK gate
+    if: always()
+    needs: [committer-check, docs-only-skip, lint, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./actions/ci-ok-gate
+        with:
+          always-required: '{"committer-check":"${{ needs.committer-check.result }}","docs-only-skip":"${{ needs.docs-only-skip.result }}"}'
+          skippable: '{"lint":"${{ needs.lint.result }}","build":"${{ needs.build.result }}"}'
+          skip: ${{ needs.docs-only-skip.outputs.code == 'false' }}
