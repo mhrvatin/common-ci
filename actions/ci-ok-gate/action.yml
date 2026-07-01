@@ -9,14 +9,14 @@ inputs:
   always-required:
     description: >
       JSON object mapping job name -> result, checked unconditionally.
-      Example: '{"committer-check":"${{ needs.committer-check.result }}"}'
+      Example: '{"committer-check":"<needs.committer-check.result>"}'
     required: false
     default: '{}'
   skippable:
     description: >
       JSON object mapping job name -> result, only checked when `skip` is not
       'true' (e.g. skipped when a PR is docs-only).
-      Example: '{"lint":"${{ needs.lint.result }}","build":"${{ needs.build.result }}"}'
+      Example: '{"lint":"<needs.lint.result>","build":"<needs.build.result>"}'
     required: false
     default: '{}'
   skip:
