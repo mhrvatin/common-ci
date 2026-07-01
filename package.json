@@ -1,0 +1,13 @@
+{
+	"name": "common-ci",
+	"private": true,
+	"workspaces": [
+		"fixture/*"
+	],
+	"scripts": {
+		"check": "biome check ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.8"
+	}
+}
