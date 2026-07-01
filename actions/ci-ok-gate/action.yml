@@ -1,0 +1,67 @@
+name: CI OK gate
+description: >
+  Single required-status-check job for branch protection. Fails if any
+  always-required job did not succeed, or (unless skipped) if any skippable
+  job did not succeed. Meant to be the sole required check so that adding or
+  reordering jobs in a workflow doesn't require updating branch protection.
+
+inputs:
+  always-required:
+    description: >
+      JSON object mapping job name -> result, checked unconditionally.
+      Example: '{"committer-check":"<needs.committer-check.result>"}'
+    required: false
+    default: '{}'
+  skippable:
+    description: >
+      JSON object mapping job name -> result, only checked when `skip` is not
+      'true' (e.g. skipped when a PR is docs-only).
+      Example: '{"lint":"<needs.lint.result>","build":"<needs.build.result>"}'
+    required: false
+    default: '{}'
+  skip:
+    description: "'true' to skip the skippable checks (e.g. docs-only PR)"
+    required: false
+    default: 'false'
+  skip-message:
+    description: Message to print when skippable checks are skipped
+    required: false
+    default: 'Docs-only change — code checks skipped intentionally.'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ALWAYS_REQUIRED: ${{ inputs.always-required }}
+        SKIPPABLE: ${{ inputs.skippable }}
+        SKIP: ${{ inputs.skip }}
+        SKIP_MESSAGE: ${{ inputs.skip-message }}
+      run: |
+        set -euo pipefail
+        FAIL=0
+
+        echo "$ALWAYS_REQUIRED" | jq -e . >/dev/null || { echo "::error::always-required is not valid JSON"; exit 1; }
+        echo "$SKIPPABLE" | jq -e . >/dev/null || { echo "::error::skippable is not valid JSON"; exit 1; }
+
+        while IFS=$'\t' read -r name result; do
+          [ -z "$name" ] && continue
+          if [ "$result" != "success" ]; then
+            echo "::error::Required job '$name' did not succeed (result: $result)"
+            FAIL=1
+          fi
+        done < <(echo "$ALWAYS_REQUIRED" | jq -r 'to_entries[] | "\(.key)\t\(.value)"')
+
+        if [ "$SKIP" = "true" ]; then
+          echo "$SKIP_MESSAGE"
+        else
+          while IFS=$'\t' read -r name result; do
+            [ -z "$name" ] && continue
+            if [ "$result" != "success" ]; then
+              echo "::error::Required job '$name' did not succeed (result: $result)"
+              FAIL=1
+            fi
+          done < <(echo "$SKIPPABLE" | jq -r 'to_entries[] | "\(.key)\t\(.value)"')
+        fi
+
+        exit $FAIL

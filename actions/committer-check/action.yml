@@ -1,0 +1,56 @@
+name: Committer check
+description: Fails if any commit in the push/PR has a committer name+email other than the expected identity.
+
+inputs:
+  expected-name:
+    description: Expected git committer name
+    required: true
+  expected-email:
+    description: Expected git committer email
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+    - name: Verify committer name and email on every commit
+      shell: bash
+      env:
+        EXPECTED_NAME: ${{ inputs.expected-name }}
+        EXPECTED_EMAIL: ${{ inputs.expected-email }}
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # PR: check every commit introduced by the branch, merges included.
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          MAPFILE=$(git log --format='%H%x09%cn%x09%ce' "$BASE..$HEAD")
+        else
+          # Push: skip merge commits. Assumes the "Create a merge commit"
+          # strategy — GitHub's merge commit itself is by 'GitHub
+          # <noreply@github.com>' and would otherwise always fail. Squash or
+          # rebase strategies would emit non-merge commits by GitHub that
+          # this filter does NOT skip — switching strategy will require
+          # revisiting this check.
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          ZERO="0000000000000000000000000000000000000000"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$ZERO" ]; then
+            MAPFILE=$(git log -1 --format='%H%x09%cn%x09%ce' "$AFTER")
+          else
+            MAPFILE=$(git log --no-merges --format='%H%x09%cn%x09%ce' "$BEFORE..$AFTER")
+          fi
+        fi
+
+        FAIL=0
+        while IFS=$'\t' read -r SHA NAME EMAIL; do
+          [ -z "$SHA" ] && continue
+          if [ "$NAME" != "$EXPECTED_NAME" ] || [ "$EMAIL" != "$EXPECTED_EMAIL" ]; then
+            echo "::error::Commit $SHA has committer '$NAME <$EMAIL>' — expected '$EXPECTED_NAME <$EXPECTED_EMAIL>'"
+            FAIL=1
+          fi
+        done <<< "$MAPFILE"
+
+        exit $FAIL
