@@ -5,9 +5,10 @@
 		"fixture/*"
 	],
 	"scripts": {
-		"check": "biome check ."
+		"check": "biome check .",
+		"build": "bun run --filter '*' build"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.8"
+		"@biomejs/biome": "2.5.15"
 	}
 }
