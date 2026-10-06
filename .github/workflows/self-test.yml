@@ -55,15 +55,114 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
           packages: hello
 
+  bun-run:
+    name: Run scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./actions/bun-run
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          scripts: check build
+
+  bun-run-failure:
+    name: Run scripts (failing script)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: missing
+        continue-on-error: true
+        uses: ./actions/bun-run
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          scripts: build does-not-exist
+      - name: A failing script fails the action
+        env:
+          OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected bun-run to fail on a missing script, got '$OUTCOME'"
+            exit 1
+          fi
+
+  setup-kamal:
+    name: Set up Kamal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Throwaway key pair: exercises the real agent and known_hosts wiring
+      # without needing a reachable server.
+      - id: key
+        run: |
+          ssh-keygen -t ed25519 -N '' -C self-test -f "$RUNNER_TEMP/id_self_test" -q
+          {
+            echo 'private<<EOF'
+            cat "$RUNNER_TEMP/id_self_test"
+            echo 'EOF'
+            echo "known-host=deploy.example.invalid $(cut -d' ' -f1,2 "$RUNNER_TEMP/id_self_test.pub")"
+          } >> "$GITHUB_OUTPUT"
+      - uses: ./actions/setup-kamal
+        with:
+          ssh-private-key: ${{ steps.key.outputs.private }}
+          known-hosts: ${{ steps.key.outputs.known-host }}
+          kamal-version: 2.12.0
+      - name: Kamal, agent and known_hosts are ready
+        env:
+          KNOWN_HOST: ${{ steps.key.outputs.known-host }}
+        run: |
+          set -euo pipefail
+          test "$(kamal version)" = "2.12.0"
+          ssh-add -l | grep -q self-test
+          grep -qxF "$KNOWN_HOST" ~/.ssh/known_hosts
+
+  setup-kamal-file:
+    name: Set up Kamal (known_hosts file)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: key
+        run: |
+          ssh-keygen -t ed25519 -N '' -f "$RUNNER_TEMP/id_self_test" -q
+          {
+            echo 'private<<EOF'
+            cat "$RUNNER_TEMP/id_self_test"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: ./actions/setup-kamal
+        with:
+          ssh-private-key: ${{ steps.key.outputs.private }}
+          known-hosts-file: fixture/known_hosts
+      - name: known_hosts file contents were appended
+        run: grep -qxF "$(cat fixture/known_hosts)" ~/.ssh/known_hosts
+
+  setup-kamal-no-known-hosts:
+    name: Set up Kamal (missing known_hosts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: missing
+        continue-on-error: true
+        uses: ./actions/setup-kamal
+        with:
+          ssh-private-key: unused
+      - name: Missing known_hosts fails the action
+        env:
+          OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected setup-kamal to fail without known-hosts, got '$OUTCOME'"
+            exit 1
+          fi
+
   ci-ok:
     name: CI OK gate
     if: always()
-    needs: [committer-check, docs-only-skip, lint, build]
+    needs: [committer-check, docs-only-skip, lint, build, bun-run, bun-run-failure, setup-kamal, setup-kamal-file, setup-kamal-no-known-hosts]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./actions/ci-ok-gate
         with:
           always-required: '{"committer-check":"${{ needs.committer-check.result }}","docs-only-skip":"${{ needs.docs-only-skip.result }}"}'
-          skippable: '{"lint":"${{ needs.lint.result }}","build":"${{ needs.build.result }}"}'
+          skippable: '{"lint":"${{ needs.lint.result }}","build":"${{ needs.build.result }}","bun-run":"${{ needs.bun-run.result }}","bun-run-failure":"${{ needs.bun-run-failure.result }}","setup-kamal":"${{ needs.setup-kamal.result }}","setup-kamal-file":"${{ needs.setup-kamal-file.result }}","setup-kamal-no-known-hosts":"${{ needs.setup-kamal-no-known-hosts.result }}"}'
           skip: ${{ needs.docs-only-skip.outputs.code == 'false' }}
