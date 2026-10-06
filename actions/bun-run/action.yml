@@ -1,0 +1,49 @@
+name: Bun run
+description: >
+  Checks out, restores the bun install cache, installs deps with bun, and runs
+  one or more package.json scripts in order. Tool-agnostic: works for any
+  repo that exposes its checks as scripts (e.g. "lint" running Prettier and
+  ESLint, "check" running svelte-check, "build", "test").
+
+inputs:
+  bun-version:
+    description: Bun version to install (passed to oven-sh/setup-bun)
+    required: true
+  scripts:
+    description: >
+      Space-separated list of package.json script names, run in order with
+      `bun run <script>`. Stops at the first failing script.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    # Restored before setup-bun: under `act`, node-based steps that run after
+    # setup-bun can't find `node` on PATH. Order doesn't matter on GitHub.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+        restore-keys: bun-${{ runner.os }}-
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: ${{ inputs.bun-version }}
+    - run: bun install --frozen-lockfile
+      shell: bash
+    - shell: bash
+      env:
+        SCRIPTS: ${{ inputs.scripts }}
+      run: |
+        set -euo pipefail
+        if [ -z "${SCRIPTS//[[:space:]]/}" ]; then
+          echo "::error::scripts must not be empty"
+          exit 1
+        fi
+        for script in $SCRIPTS; do
+          echo "::group::bun run $script"
+          bun run "$script"
+          echo "::endgroup::"
+        done
