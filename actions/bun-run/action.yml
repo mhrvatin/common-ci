@@ -1,25 +1,26 @@
-name: Biome lint
+name: Bun run
 description: >
-  Checks out, restores the bun install cache, installs deps with bun, and
-  runs Biome — either the repo's full "check" script, or a scoped check
-  against a specific file list. Assumes the repo has a `check` script (e.g.
-  "biome check .") in package.json and Biome as a devDependency.
+  Checks out, restores the bun install cache, installs deps with bun, and runs
+  one or more package.json scripts in order. Tool-agnostic: works for any
+  repo that exposes its checks as scripts (e.g. "lint" running Prettier and
+  ESLint, "check" running svelte-check, "build", "test").
 
 inputs:
   bun-version:
     description: Bun version to install (passed to oven-sh/setup-bun)
     required: true
-  files:
+  scripts:
     description: >
-      Space-separated list of changed files to lint. When empty (default),
-      runs the full `bun run check` script instead.
-    required: false
-    default: ''
+      Space-separated list of package.json script names, run in order with
+      `bun run <script>`. Stops at the first failing script.
+    required: true
 
 runs:
   using: composite
   steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
     # Restored before setup-bun: under `act`, node-based steps that run after
     # setup-bun can't find `node` on PATH. Order doesn't matter on GitHub.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -34,10 +35,15 @@ runs:
       shell: bash
     - shell: bash
       env:
-        FILES: ${{ inputs.files }}
+        SCRIPTS: ${{ inputs.scripts }}
       run: |
-        if [ -z "$FILES" ]; then
-          bun run check
-        else
-          ./node_modules/.bin/biome check --no-errors-on-unmatched $FILES
+        set -euo pipefail
+        if [ -z "${SCRIPTS//[[:space:]]/}" ]; then
+          echo "::error::scripts must not be empty"
+          exit 1
         fi
+        for script in $SCRIPTS; do
+          echo "::group::bun run $script"
+          bun run "$script"
+          echo "::endgroup::"
+        done

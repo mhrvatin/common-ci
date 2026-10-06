@@ -1,0 +1,110 @@
+name: Set up Kamal
+description: >
+  Prepares a job to run Kamal against a server: checks out, loads the deploy
+  SSH key into an agent, trusts the server's pinned host key, sets up Docker
+  Buildx, logs in to the container registry, and installs Ruby and Kamal.
+  Does not run Kamal itself: run `kamal setup` or `kamal deploy` in a
+  following step, with the repo's own secrets in that step's `env`.
+
+inputs:
+  ssh-private-key:
+    description: Private SSH key for the deploy user on the server
+    required: true
+  known-hosts:
+    description: >
+      known_hosts line(s) for the server, e.g. "1.2.3.4 ssh-ed25519 AAAA...".
+      Set exactly one of `known-hosts` and `known-hosts-file`. A pinned key is
+      required so a changed host key fails the deploy instead of being trusted.
+    required: false
+    default: ''
+  known-hosts-file:
+    description: Path (relative to the repo root) to a file with known_hosts line(s)
+    required: false
+    default: ''
+  registry:
+    description: Container registry to log in to
+    required: false
+    default: ghcr.io
+  registry-username:
+    description: Registry username
+    required: false
+    default: ${{ github.repository_owner }}
+  registry-password:
+    description: >
+      Registry password or token. Defaults to GITHUB_TOKEN only when
+      `registry` is ghcr.io (it can push there when the job grants
+      `packages: write`). Required for any other registry, so the token is
+      never sent to a third party.
+    required: false
+    default: ''
+  kamal-version:
+    description: Kamal gem version to install
+    required: false
+    default: 2.12.0
+  ruby-version:
+    description: Ruby version to install (passed to ruby/setup-ruby)
+    required: false
+    default: '3.3'
+  fetch-depth:
+    description: Commits to fetch on checkout (passed to actions/checkout; 0 = full history)
+    required: false
+    default: '1'
+
+runs:
+  using: composite
+  steps:
+    - name: Require exactly one known_hosts input
+      shell: bash
+      env:
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        KNOWN_HOSTS_FILE: ${{ inputs.known-hosts-file }}
+        REGISTRY: ${{ inputs.registry }}
+        HAS_REGISTRY_PASSWORD: ${{ inputs.registry-password != '' }}
+      run: |
+        set -euo pipefail
+        if [ -n "$KNOWN_HOSTS" ] && [ -n "$KNOWN_HOSTS_FILE" ] || [ -z "$KNOWN_HOSTS$KNOWN_HOSTS_FILE" ]; then
+          echo "::error::Set exactly one of known-hosts and known-hosts-file"
+          exit 1
+        fi
+        if [ "$REGISTRY" != "ghcr.io" ] && [ "$HAS_REGISTRY_PASSWORD" != "true" ]; then
+          echo "::error::Set registry-password when registry is not ghcr.io"
+          exit 1
+        fi
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: false
+    - name: Trust the server's pinned host key
+      shell: bash
+      env:
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        KNOWN_HOSTS_FILE: ${{ inputs.known-hosts-file }}
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        if [ -n "$KNOWN_HOSTS" ]; then
+          printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+        else
+          if [ ! -f "$KNOWN_HOSTS_FILE" ]; then
+            echo "::error::known-hosts-file '$KNOWN_HOSTS_FILE' does not exist"
+            exit 1
+          fi
+          cat "$KNOWN_HOSTS_FILE" >> ~/.ssh/known_hosts
+        fi
+    - uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+      with:
+        ssh-private-key: ${{ inputs.ssh-private-key }}
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password || github.token }}
+    - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+    - shell: bash
+      env:
+        KAMAL_VERSION: ${{ inputs.kamal-version }}
+      run: gem install kamal --version "$KAMAL_VERSION" --no-document

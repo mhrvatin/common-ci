@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 `common-ci` is a private collection of shared **GitHub composite actions** for
-Marcus's personal bun/TypeScript repos. There is no application code here —
+the owner's personal bun/TypeScript repos, both Biome-based ones and SvelteKit
+ones that use Prettier + ESLint. There is no application code here —
 every unit of work is a self-contained composite action under `actions/`,
 consumed by other repos as:
 
@@ -28,11 +29,13 @@ There is no unit test framework. Actions are validated by dogfooding: each
 push/PR to `main` runs `.github/workflows/self-test.yml`, which invokes every
 action in this repo (via local `uses: ./actions/<name>`) against the tiny
 `fixture/hello` bun workspace that exists solely to give the actions
-something real to check out, lint, and build. There is no way to exercise a
-single action locally short of running it inside an actual GitHub Actions
-job (e.g. via `act`) — to validate a change, open a PR and let self-test run,
-or read `self-test.yml` to see the exact inputs each action is expected to
-handle.
+something real to check out, lint, and build. To run a single self-test job
+locally, use `act` (runs in Docker); the README's "Self-test" section has
+the exact command and its known limitations (post steps and JavaScript
+actions after `setup-bun`/`setup-ruby` fail with `node: executable file not
+found`; git-history actions fail from a worktree). Judge an act run by its
+main steps. Otherwise, open a PR and let self-test run, or read
+`self-test.yml` to see the exact inputs each action is expected to handle.
 
 ## Architecture
 
@@ -49,7 +52,18 @@ pipeline. The actions and the pattern they form:
   can be scoped to `docs-only-skip`'s `changed-files` output instead of
   linting the whole repo. `bun-build` runs `bun run --filter <pkg> build`
   per package in a space-separated list (with an optional scope prefix for
-  scoped workspace names, e.g. `@facit/`).
+  scoped workspace names, e.g. `@acme/`). Both restore the bun install
+  cache before `setup-bun`.
+- **`bun-run`** — the tool-agnostic code-check job for repos that don't use
+  Biome (e.g. SvelteKit repos with Prettier + ESLint). Runs a
+  space-separated list of root `package.json` scripts in order (e.g.
+  `lint`, `check`, `build`, `db:migrate test`), stopping at the first
+  failure.
+- **`setup-kamal`** — prepares a deploy job: checkout, SSH agent, pinned
+  `known_hosts` (exactly one of `known-hosts` or `known-hosts-file`; no
+  `ssh-keyscan` fallback by design), Buildx, GHCR login, Ruby, and Kamal.
+  It does not run Kamal; each consumer runs its own `kamal setup` or
+  `kamal deploy` step with its own secrets.
 - **`ci-ok-gate`** — the single required status check meant to be the *only*
   job branch protection points at. It takes two JSON maps of
   `job-name -> result` — `always-required` (checked unconditionally, e.g.
@@ -67,7 +81,8 @@ pipeline. The actions and the pattern they form:
   would require revisiting this action, since GitHub's own commits would no
   longer be filtered out correctly.
 
-Pinned action versions (`actions/checkout`, `oven-sh/setup-bun`) are pinned
+Third-party actions (`actions/checkout`, `actions/cache`, `oven-sh/setup-bun`,
+`ruby/setup-ruby`, `webfactory/ssh-agent`, the `docker/*` actions) are pinned
 to a full commit SHA with a version comment, not a tag — keep that pattern
 when bumping or adding third-party action references.
 
@@ -79,4 +94,7 @@ repo-specific instead:
 - Monorepo affected-package / dependency-graph detection — too coupled to
   each repo's package graph to generalize from one real consumer.
 - Coverage ratchet — depends on a hardcoded per-repo package list.
-- Deploy steps — target platform and secrets vary per repo.
+- Deploy commands and secrets — `setup-kamal` shares the toolchain, but each
+  repo keeps its own `kamal setup`/`kamal deploy` step, secrets, and extras.
+- Postgres-backed test jobs — composite actions can't declare `services:`,
+  and ports, credentials, and init steps differ per repo.
