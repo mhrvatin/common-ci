@@ -14,7 +14,7 @@ inputs:
   scope:
     description: >
       Prefix prepended to each package name to form the --filter argument
-      (e.g. "@facit/" for a workspace scoped under @facit). Leave empty to
+      (e.g. "@acme/" for a workspace scoped under @acme). Leave empty to
       use the bare package names as filters.
     required: false
     default: ''
